@@ -1,0 +1,36 @@
+# ============================================================
+# Lahraoui-NeuralForex-Pro – brain-python dependencies
+# ============================================================
+
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# Data handling & numerics
+pandas==2.2.2
+numpy==1.26.4
+
+# Machine learning & deep learning
+scikit-learn==1.4.2
+tensorflow==2.16.1
+
+# Technical indicators
+ta==0.11.0
+
+# NLP / Sentiment analysis
+transformers==4.40.2
+torch==2.3.0
+requests==2.31.0
+beautifulsoup4==4.12.3
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.30
+
+# MetaTrader5 (Windows-only; stubbed on Linux/Docker)
+MetaTrader5==5.0.45
+
+# Async & utilities
+httpx==0.27.0
+python-dotenv==1.0.1
+pydantic==2.7.1

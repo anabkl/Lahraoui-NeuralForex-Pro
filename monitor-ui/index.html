@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lahraoui-NeuralForex-Pro | Dashboard</title>
+
+  <!-- Chart.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    /* ── Reset & base ────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0d0f14;
+      --surface:    #161b25;
+      --border:     #232b3a;
+      --accent:     #00d4aa;
+      --accent2:    #ff6b6b;
+      --accent3:    #ffd166;
+      --text:       #e2e8f0;
+      --muted:      #6b7fa3;
+      --green:      #22c55e;
+      --red:        #ef4444;
+      --font:       'Segoe UI', system-ui, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ─────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.04em;
+    }
+    header .meta {
+      display: flex;
+      gap: 20px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    #status-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--red);
+      margin-right: 6px;
+      transition: background 0.3s;
+    }
+    #status-dot.healthy { background: var(--green); }
+
+    /* ── Stat cards ──────────────────────────────────────────── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 14px;
+      padding: 20px 24px 0;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .card-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .card-value { font-size: 1.4rem; font-weight: 700; }
+    .card-value.positive { color: var(--green); }
+    .card-value.negative { color: var(--red); }
+    .card-value.neutral  { color: var(--accent3); }
+
+    /* ── Charts grid ─────────────────────────────────────────── */
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 20px 24px;
+    }
+    @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+
+    .chart-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .chart-box.full { grid-column: 1 / -1; }
+    .chart-title { font-size: 0.82rem; color: var(--muted); margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+    /* ── Trade log ───────────────────────────────────────────── */
+    .log-section { padding: 0 24px 30px; }
+    .log-section h2 { font-size: 0.9rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+    #trade-log {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.8rem;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    #trade-log table { width: 100%; border-collapse: collapse; }
+    #trade-log th {
+      position: sticky; top: 0;
+      background: #1e2535;
+      color: var(--muted);
+      padding: 8px 14px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+    }
+    #trade-log td { padding: 7px 14px; border-bottom: 1px solid var(--border); }
+    .log-buy  { color: var(--green); }
+    .log-sell { color: var(--red); }
+    .log-hold { color: var(--muted); }
+    .log-pnl-pos { color: var(--green); font-weight: 600; }
+    .log-pnl-neg { color: var(--red);   font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<header>
+  <h1>⚡ Lahraoui-NeuralForex-Pro</h1>
+  <div class="meta">
+    <span><span id="status-dot"></span><span id="status-text">Connecting…</span></span>
+    <span>EUR/USD · M1</span>
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<!-- ── Stat cards ──────────────────────────────────────────────────────────── -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Bid</div>
+    <div class="card-value" id="bid">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Ask</div>
+    <div class="card-value" id="ask">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">AI Signal</div>
+    <div class="card-value neutral" id="ai-signal">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Confidence</div>
+    <div class="card-value" id="confidence">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">FED Sentiment</div>
+    <div class="card-value" id="fed-sentiment">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">ECB Sentiment</div>
+    <div class="card-value" id="ecb-sentiment">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">EUR/USD Bias</div>
+    <div class="card-value" id="eurusd-bias">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Session P&L</div>
+    <div class="card-value" id="session-pnl">0.0 pips</div>
+  </div>
+</div>
+
+<!-- ── Charts ──────────────────────────────────────────────────────────────── -->
+<div class="charts">
+  <div class="chart-box full">
+    <div class="chart-title">Live Price vs. AI Prediction</div>
+    <canvas id="price-chart" height="80"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="chart-title">Sentiment Scores (FED / ECB)</div>
+    <canvas id="sentiment-chart" height="130"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="chart-title">Model Confidence (BUY / HOLD / SELL)</div>
+    <canvas id="confidence-chart" height="130"></canvas>
+  </div>
+</div>
+
+<!-- ── Trade Log ───────────────────────────────────────────────────────────── -->
+<div class="log-section">
+  <h2>Live Trade Log</h2>
+  <div id="trade-log">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th><th>Signal</th><th>Entry</th>
+          <th>Lot</th><th>SL</th><th>TP</th><th>P&L (pips)</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="log-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="js/dashboard.js"></script>
+</body>
+</html>
