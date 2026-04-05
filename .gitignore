@@ -205,3 +205,22 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ── NeuralForex-Pro project specifics ────────────────────────────────────────
+
+# Java build artifacts
+executor-java/target/
+
+# Backtest results (generated at runtime)
+backtest-engine-php/results/
+backtest-engine-php/data/
+
+# Model weights (large binary files – store in object storage)
+brain-python/app/weights/
+
+# Docker volumes / local DB data
+postgres_data/
+
+# Environment files with secrets
+*.env.local
+.env.production
