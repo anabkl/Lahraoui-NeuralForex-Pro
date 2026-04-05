@@ -3,7 +3,7 @@ brain-python/app/main.py
 ========================
 Lahraoui-NeuralForex-Pro – AI Brain Service
 FastAPI application that:
-  • Streams EUR/USD live ticks from MetaTrader 5
+  • Streams EUR/USD live ticks via yfinance (cross-platform)
   • Computes technical indicators (RSI, MACD) and order-flow features
   • Serves Deep-Learning (LSTM/Transformer) price predictions
   • Exposes NLP-based economic sentiment from FED & ECB news

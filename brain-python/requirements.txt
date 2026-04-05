@@ -29,8 +29,8 @@ beautifulsoup4==4.12.3
 psycopg2-binary==2.9.9
 sqlalchemy==2.0.30
 
-# MetaTrader5 (Windows-only; stubbed on Linux/Docker)
-MetaTrader5==5.0.45
+# Market data (cross-platform)
+yfinance==0.2.54
 
 # Async & utilities
 httpx==0.27.0

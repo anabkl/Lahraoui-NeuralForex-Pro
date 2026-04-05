@@ -1,39 +1,28 @@
 """
 brain-python/app/data_feed.py
 ==============================
-MetaTrader 5 data feed wrapper.
+yfinance-based data feed for EUR/USD.
 
-On Windows with a live MT5 terminal this module connects directly.
-On Linux/Docker (CI or containerised environment) it falls back to a
-lightweight simulation mode so the rest of the service remains testable.
+Fetches real market data via Yahoo Finance (ticker ``EURUSD=X``) so the
+service works cross-platform on macOS, Linux, and inside Docker.
 """
 
 import asyncio
 import logging
-import os
-import random
 from datetime import datetime, timezone
 from typing import Any
 
-import numpy as np
 import pandas as pd
-
-logger = logging.getLogger(__name__)
-
-# Try importing MetaTrader5; it is only available on Windows.
-try:
-    import MetaTrader5 as mt5  # type: ignore[import]
-
-    _MT5_AVAILABLE = True
-except ImportError:
-    mt5 = None  # type: ignore[assignment]
-    _MT5_AVAILABLE = False
-    logger.warning("MetaTrader5 not available – using simulation mode")
+import yfinance as yf
 
 try:
     import ta  # technical-analysis library
 except ImportError:  # pragma: no cover
     ta = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
+
+TICKER = "EURUSD=X"
 
 
 class DataFeedService:
@@ -49,40 +38,22 @@ class DataFeedService:
     """
 
     SYMBOL = "EURUSD"
-    TIMEFRAME_M1 = 1  # MT5 TIMEFRAME_M1 constant value
 
     def __init__(self) -> None:
-        self._simulation = not _MT5_AVAILABLE
-        self._sim_price: float = 1.0850  # synthetic starting price
         self._connected = False
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
     async def connect(self) -> None:
-        """Initialise the MetaTrader 5 connection (or simulation mode)."""
-        if self._simulation:
-            logger.info("DataFeed: simulation mode active (no MT5 terminal)")
-            self._connected = True
-            return
-
-        loop = asyncio.get_event_loop()
-        ok = await loop.run_in_executor(None, mt5.initialize)
-        if not ok:
-            err = mt5.last_error()
-            logger.error("MT5 init failed: %s", err)
-            raise ConnectionError(f"MetaTrader5 init failed: {err}")
-
-        logger.info("MT5 connected – account: %s", mt5.account_info())
+        """Mark the feed as ready (no persistent connection needed for yfinance)."""
         self._connected = True
+        logger.info("DataFeed: connected via yfinance (ticker %s)", TICKER)
 
     async def disconnect(self) -> None:
-        """Cleanly shut down the MT5 connection."""
-        if not self._simulation and _MT5_AVAILABLE:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, mt5.shutdown)
-            logger.info("MT5 disconnected")
+        """No-op – yfinance uses stateless HTTP requests."""
         self._connected = False
+        logger.info("DataFeed: disconnected")
 
     # ------------------------------------------------------------------
     # Public API
@@ -92,20 +63,9 @@ class DataFeedService:
         if not self._connected:
             raise RuntimeError("DataFeed not connected")
 
-        if self._simulation:
-            return self._simulate_tick()
-
         loop = asyncio.get_event_loop()
-        tick = await loop.run_in_executor(None, mt5.symbol_info_tick, self.SYMBOL)
-        if tick is None:
-            raise RuntimeError(f"No tick data for {self.SYMBOL}")
-
-        return {
-            "symbol": self.SYMBOL,
-            "bid": tick.bid,
-            "ask": tick.ask,
-            "time": datetime.fromtimestamp(tick.time, tz=timezone.utc).isoformat(),
-        }
+        tick_data = await loop.run_in_executor(None, self._fetch_latest_tick)
+        return tick_data
 
     async def get_history(self, bars: int = 200) -> dict[str, Any]:
         """
@@ -115,10 +75,8 @@ class DataFeedService:
         if not self._connected:
             raise RuntimeError("DataFeed not connected")
 
-        if self._simulation:
-            df = self._simulate_ohlcv(bars)
-        else:
-            df = await self._fetch_mt5_history(bars)
+        loop = asyncio.get_event_loop()
+        df = await loop.run_in_executor(None, lambda: self._fetch_history(bars))
 
         df = self._compute_indicators(df)
         # Drop rows with NaN introduced by indicator warmup
@@ -132,74 +90,69 @@ class DataFeedService:
         }
 
     # ------------------------------------------------------------------
-    # MT5 fetch (real)
+    # yfinance fetch helpers
     # ------------------------------------------------------------------
-    async def _fetch_mt5_history(self, bars: int) -> pd.DataFrame:
-        import MetaTrader5 as mt5  # re-import inside to keep type checker happy
+    def _fetch_latest_tick(self) -> dict[str, Any]:
+        """Fetch the most recent quote and return bid/ask approximation.
 
-        mt5_tf = mt5.TIMEFRAME_M1
-        loop = asyncio.get_event_loop()
-        rates = await loop.run_in_executor(
-            None,
-            lambda: mt5.copy_rates_from_pos(self.SYMBOL, mt5_tf, 0, bars),
-        )
-        if rates is None or len(rates) == 0:
-            raise RuntimeError(f"MT5 returned no history for {self.SYMBOL}")
-
-        df = pd.DataFrame(rates)
-        df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
-        df.rename(
-            columns={
-                "open": "Open",
-                "high": "High",
-                "low": "Low",
-                "close": "Close",
-                "tick_volume": "Volume",
-                "real_volume": "RealVolume",
-            },
-            inplace=True,
-        )
-        return df[["time", "Open", "High", "Low", "Close", "Volume"]]
-
-    # ------------------------------------------------------------------
-    # Simulation helpers
-    # ------------------------------------------------------------------
-    def _simulate_tick(self) -> dict[str, Any]:
-        """Produce a plausible synthetic EUR/USD tick."""
-        spread = round(random.uniform(0.00010, 0.00020), 5)
-        self._sim_price += random.gauss(0, 0.00030)
-        self._sim_price = max(1.0500, min(1.1500, self._sim_price))
-        bid = round(self._sim_price, 5)
-        ask = round(bid + spread, 5)
+        Yahoo Finance does not expose a real FX spread, so a synthetic
+        spread of 1 pip (0.00010) is added to derive ask from bid.
+        """
+        ticker = yf.Ticker(TICKER)
+        try:
+            price: float = float(ticker.fast_info.last_price)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Could not retrieve latest price for {TICKER}: {exc}"
+            ) from exc
+        # Use a synthetic 1-pip spread (typical for EUR/USD)
+        spread = 0.00010
+        bid = round(price, 5)
+        ask = round(price + spread, 5)
         return {
             "symbol": self.SYMBOL,
             "bid": bid,
             "ask": ask,
             "time": datetime.now(tz=timezone.utc).isoformat(),
-            "simulated": True,
         }
 
-    def _simulate_ohlcv(self, bars: int) -> pd.DataFrame:
-        """Generate synthetic M1 OHLCV data using a random-walk model."""
-        rng = np.random.default_rng(seed=42)
-        times = pd.date_range(end=datetime.now(tz=timezone.utc), periods=bars, freq="1min")
-        close = np.cumprod(1 + rng.normal(0, 0.0003, bars)) * 1.0850
-        high = close + np.abs(rng.normal(0, 0.0005, bars))
-        low = close - np.abs(rng.normal(0, 0.0005, bars))
-        open_ = np.roll(close, 1)
-        open_[0] = close[0]
-        volume = rng.integers(100, 2000, bars).astype(float)
+    def _fetch_history(self, bars: int) -> pd.DataFrame:
+        """Download the last *bars* 1-minute candles from Yahoo Finance."""
+        # yfinance caps 1m data at 7 days; fetch enough days to cover *bars* bars.
+        # FX markets trade ~23 h/day on weekdays; assume ~1380 tradeable minutes
+        # per day and add a 3-day buffer for weekends / low-liquidity gaps.
+        tradeable_minutes_per_day = 1380
+        days_needed = max(2, (bars // tradeable_minutes_per_day) + 3)
+        period = f"{min(days_needed, 7)}d"
 
-        return pd.DataFrame(
-            {
-                "time": times,
-                "Open": open_,
-                "High": high,
-                "Low": low,
-                "Close": close,
-                "Volume": volume,
-            }
+        raw: pd.DataFrame = yf.download(
+            TICKER,
+            period=period,
+            interval="1m",
+            auto_adjust=True,
+            progress=False,
         )
+
+        if raw.empty:
+            raise RuntimeError(f"yfinance returned no data for {TICKER}")
+
+        # Flatten multi-level columns produced when downloading a single ticker
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+
+        raw = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+
+        # Ensure UTC-aware DatetimeIndex and expose it as a 'time' column
+        if raw.index.tz is None:
+            raw.index = raw.index.tz_localize("UTC")
+        else:
+            raw.index = raw.index.tz_convert("UTC")
+
+        raw.index.name = "time"
+        raw = raw.reset_index()
+
+        # Return the most recent *bars* rows
+        return raw.tail(bars).reset_index(drop=True)
 
     # ------------------------------------------------------------------
     # Technical indicator computation
@@ -251,3 +204,4 @@ class DataFeedService:
         avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
         rs = avg_gain / (avg_loss + 1e-9)
         return 100 - (100 / (1 + rs))
+
