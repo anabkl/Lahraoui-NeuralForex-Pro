@@ -76,8 +76,9 @@ public class OrderExecutionService {
             }
 
             if (signal.getConfidence() < MIN_CONFIDENCE) {
-                log.info("Confidence {:.4f} below threshold {:.2f} – skipping trade",
-                        signal.getConfidence(), MIN_CONFIDENCE);
+                log.info("Confidence {} below threshold {} – skipping trade",
+                        String.format("%.4f", signal.getConfidence()),
+                        String.format("%.2f", MIN_CONFIDENCE));
                 return;
             }
 
