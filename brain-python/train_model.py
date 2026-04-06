@@ -214,7 +214,8 @@ def build_sequences(
     valid_end = len(features) - 1
     for i in range(seq_len, valid_end):
         xs.append(features[i - seq_len: i])
-        ys.append(labels[i - 1])  # label of the last bar in the window
+        # The window covers rows [i-seq_len, i-1]; its label is for the last row (i-1)
+        ys.append(labels[i - 1])
 
     X = np.stack(xs, axis=0)       # (N, seq_len, n_features)
     y_int = np.array(ys, dtype=np.int32)
