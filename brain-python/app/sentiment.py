@@ -154,21 +154,55 @@ class SentimentAnalyzer:
             "headlines_analysed": len(headlines),
         }
 
+    # Realistic browser User-Agent to avoid 403 Forbidden from bot-blocking servers (e.g. ECB)
+    _USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+
     async def _fetch_headlines(self, urls: list[str]) -> list[str]:
-        """Download RSS feeds and extract <title> text."""
+        """Download RSS feeds and extract <title> text from <item> / <entry> elements."""
+        from bs4 import BeautifulSoup  # available via beautifulsoup4 in requirements
+
         headlines: list[str] = []
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        headers = {"User-Agent": self._USER_AGENT}
+        async with httpx.AsyncClient(timeout=15.0, headers=headers, follow_redirects=True) as client:
             for url in urls:
                 try:
                     resp = await client.get(url)
                     resp.raise_for_status()
-                    # Minimal XML title extraction (no lxml dependency required)
-                    import re
-                    titles = re.findall(r"<title><!\[CDATA\[(.*?)\]\]></title>", resp.text)
-                    if not titles:
-                        titles = re.findall(r"<title>(.*?)</title>", resp.text)
-                    # Skip the first title (feed name) and take up to 10
-                    headlines.extend(titles[1:11])
+
+                    # Parse as XML; fall back to html.parser if lxml is absent
+                    try:
+                        soup = BeautifulSoup(resp.content, "xml")
+                        parser_used = "xml"
+                    except Exception:
+                        soup = BeautifulSoup(resp.content, "html.parser")
+                        parser_used = "html.parser"
+
+                    # RSS 2.0 uses <item>; Atom uses <entry>
+                    items = soup.find_all("item") or soup.find_all("entry")
+
+                    extracted: list[str] = []
+                    for item in items[:10]:
+                        title_tag = item.find("title")
+                        if title_tag:
+                            text = title_tag.get_text(strip=True)
+                            if text:
+                                extracted.append(text)
+
+                    if extracted:
+                        logger.debug(
+                            "Fetched %d headlines from %s (parser=%s)",
+                            len(extracted), url, parser_used,
+                        )
+                        headlines.extend(extracted)
+                    else:
+                        logger.warning(
+                            "No <item>/<entry> titles found in %s – response snippet: %.200s",
+                            url, resp.text,
+                        )
                 except Exception as exc:
                     logger.warning("Failed to fetch %s: %s", url, exc)
         return headlines
