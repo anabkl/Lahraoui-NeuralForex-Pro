@@ -1,0 +1,39 @@
+# ============================================================
+# Lahraoui-NeuralForex-Pro – brain-python dependencies
+# ============================================================
+
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# Data handling & numerics
+pandas==2.2.2
+numpy==1.26.4
+
+# Machine learning & deep learning
+scikit-learn==1.4.2
+tensorflow==2.16.1
+
+# Technical indicators
+ta==0.11.0
+
+# NLP / Sentiment analysis
+# transformers 4.48.0+ patches deserialization of untrusted data (CVE advisory)
+transformers==4.48.0
+# torch 2.6.0 patches torch.load() remote-code-execution via weights_only=True (CVE advisory)
+torch==2.6.0
+requests==2.31.0
+beautifulsoup4==4.12.3
+lxml==5.2.1
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.30
+
+# Market data (cross-platform)
+yfinance==0.2.54
+
+# Async & utilities
+httpx==0.27.0
+python-dotenv==1.0.1
+pydantic==2.7.1
