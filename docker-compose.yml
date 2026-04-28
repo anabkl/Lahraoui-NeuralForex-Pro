@@ -1,117 +1,127 @@
 ##############################################################################
-# Lahraoui-NeuralForex-Pro – Docker Compose Orchestration
+# Lahraoui-NeuralForex-Pro - Docker Compose Orchestration
 #
-# Services:
-#   brain-python   – FastAPI AI prediction & sentiment engine (Python 3.11)
-#   executor-java  – Spring Boot order execution & risk management (Java 17)
-#   backtest-php   – PHP 8.3 historical backtesting engine
-#   monitor-ui     – Static Nginx dashboard (Chart.js)
-#   postgres       – PostgreSQL 16 database for trade logging
+# Start everything:
+#   docker compose up --build
 #
-# Usage:
-#   docker compose up --build          # start all services
-#   docker compose up brain-python     # start only the AI brain
-#   docker compose run backtest-php    # run a one-shot backtest
+# The defaults are safe for local academic demos:
+# - market data is synthetic unless MARKET_DATA_MODE=twelvedata is set
+# - sentiment is neutral demo mode unless SENTIMENT_MODE=live is set
+# - order execution is simulation-only
 ##############################################################################
 
-version: "3.9"
-
-# ── Shared network ─────────────────────────────────────────────────────────────
 networks:
   forex-net:
     driver: bridge
 
-# ── Named volumes ──────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
   model_weights:
 
-# ── Services ──────────────────────────────────────────────────────────────────
 services:
-
-  # ── PostgreSQL – trade log & historical data store ─────────────────────────
   postgres:
     image: postgres:16-alpine
-    container_name: neuralforex-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       neuralforex
-      POSTGRES_USER:     neuralforex
-      POSTGRES_PASSWORD: neuralforex_secret
+      POSTGRES_DB: ${POSTGRES_DB:-neuralforex}
+      POSTGRES_USER: ${POSTGRES_USER:-neuralforex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-neuralforex_secret}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - forex-net
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U neuralforex -d neuralforex"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-neuralforex} -d ${POSTGRES_DB:-neuralforex}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ── Brain – Python FastAPI AI service ──────────────────────────────────────
   brain-python:
     build:
       context: ./brain-python
       dockerfile: Dockerfile
-    container_name: neuralforex-brain
     restart: unless-stopped
     environment:
-      BRAIN_PORT:         "8000"
+      BRAIN_PORT: "8000"
       MODEL_WEIGHTS_PATH: /app/weights/model.weights.h5
-      DB_URL:             postgresql://neuralforex:neuralforex_secret@postgres:5432/neuralforex
+      DB_URL: postgresql://${POSTGRES_USER:-neuralforex}:${POSTGRES_PASSWORD:-neuralforex_secret}@postgres:5432/${POSTGRES_DB:-neuralforex}
+      MARKET_DATA_MODE: ${MARKET_DATA_MODE:-demo}
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY:-}
+      TWELVE_DATA_SYMBOL: ${TWELVE_DATA_SYMBOL:-EUR/USD}
+      SYMBOL: ${SYMBOL:-EURUSD}
+      SENTIMENT_MODE: ${SENTIMENT_MODE:-demo}
     volumes:
       - model_weights:/app/weights
     networks:
       - forex-net
     ports:
-      - "8000:8000"
+      - "${BRAIN_HOST_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 15m
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
-  # ── Executor – Java Spring Boot order execution service ────────────────────
   executor-java:
     build:
       context: ./executor-java
       dockerfile: Dockerfile
-    container_name: neuralforex-executor
     restart: unless-stopped
     environment:
       BRAIN_SERVICE_URL: http://brain-python:8000
-      DB_URL:            jdbc:postgresql://postgres:5432/neuralforex
-      DB_USER:           neuralforex
-      DB_PASS:           neuralforex_secret
-      ACCOUNT_BALANCE:   "10000"
-      RISK_PERCENT:      "1.0"
-      STOP_LOSS_PIPS:    "20"
-      REWARD_RATIO:      "2.0"
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-neuralforex}
+      DB_USER: ${POSTGRES_USER:-neuralforex}
+      DB_PASS: ${POSTGRES_PASSWORD:-neuralforex_secret}
+      ACCOUNT_BALANCE: ${ACCOUNT_BALANCE:-10000}
+      RISK_PERCENT: ${RISK_PERCENT:-1.0}
+      STOP_LOSS_PIPS: ${STOP_LOSS_PIPS:-20}
+      REWARD_RATIO: ${REWARD_RATIO:-2.0}
+      MIN_CONFIDENCE: ${MIN_CONFIDENCE:-0.60}
+      EXECUTION_MODE: ${EXECUTION_MODE:-SIMULATION}
     networks:
       - forex-net
     ports:
-      - "8080:8080"
+      - "${EXECUTOR_HOST_PORT:-8080}:8080"
     depends_on:
-      - brain-python
-      - postgres
+      brain-python:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
-  # ── Backtest – PHP one-shot historical analysis ────────────────────────────
-  backtest-php:
+  backtest-engine-php:
     build:
       context: ./backtest-engine-php
       dockerfile: Dockerfile
-    container_name: neuralforex-backtest
-    # Run once and exit (restart: no)
     restart: "no"
+    environment:
+      BACKTEST_DATA_FILE: ${BACKTEST_DATA_FILE:-/app/data/eur_usd_1min_7days15-04_to_21-4.csv}
+      BACKTEST_SYNTHETIC_BARS: ${BACKTEST_SYNTHETIC_BARS:-10000}
+      STOP_LOSS_PIPS: ${STOP_LOSS_PIPS:-20}
+      TAKE_PROFIT_PIPS: ${TAKE_PROFIT_PIPS:-40}
+      MIN_CONFIDENCE: ${MIN_CONFIDENCE:-0.60}
+      INITIAL_BALANCE: ${ACCOUNT_BALANCE:-10000}
+      RISK_PERCENT: ${RISK_PERCENT:-1.0}
     volumes:
-      - ./backtest-engine-php/data:/app/data:ro
+      - ./data:/app/data:ro
       - ./backtest-engine-php/results:/app/results
     networks:
       - forex-net
@@ -119,10 +129,8 @@ services:
       postgres:
         condition: service_healthy
 
-  # ── Monitor UI – Nginx static dashboard ────────────────────────────────────
   monitor-ui:
     image: nginx:1.27-alpine
-    container_name: neuralforex-monitor
     restart: unless-stopped
     volumes:
       - ./monitor-ui:/usr/share/nginx/html:ro
@@ -130,6 +138,14 @@ services:
     networks:
       - forex-net
     ports:
-      - "3000:80"
+      - "${MONITOR_HOST_PORT:-3000}:80"
     depends_on:
-      - brain-python
+      brain-python:
+        condition: service_healthy
+      executor-java:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6

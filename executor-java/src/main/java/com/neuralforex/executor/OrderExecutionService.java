@@ -30,7 +30,15 @@ public class OrderExecutionService {
     private static final Logger log = LoggerFactory.getLogger(OrderExecutionService.class);
 
     /** Minimum model confidence required before placing a trade. */
-    private static final double MIN_CONFIDENCE = 0.60;
+    @Value("${trading.min_confidence:0.60}")
+    private double minConfidence;
+
+    /**
+     * Keep real-money execution disabled by default. This portfolio project logs
+     * simulated orders until a broker integration is deliberately implemented.
+     */
+    @Value("${execution.mode:SIMULATION}")
+    private String executionMode;
 
     @Value("${brain.service.url:http://brain-python:8000}")
     private String brainServiceUrl;
@@ -75,10 +83,10 @@ public class OrderExecutionService {
                 return;
             }
 
-            if (signal.getConfidence() < MIN_CONFIDENCE) {
+            if (signal.getConfidence() < minConfidence) {
                 log.info("Confidence {} below threshold {} – skipping trade",
                         String.format("%.4f", signal.getConfidence()),
-                        String.format("%.2f", MIN_CONFIDENCE));
+                        String.format("%.2f", minConfidence));
                 return;
             }
 
@@ -133,7 +141,12 @@ public class OrderExecutionService {
      * In production: replace with your broker's API call (FIX/REST/MT5).
      */
     void submitOrder(TradeOrder order) {
-        log.info("SUBMITTING ORDER at {} → {}", Instant.now(), order);
+        if (!"SIMULATION".equalsIgnoreCase(executionMode)) {
+            log.warn("execution.mode={} requested, but live broker execution is not implemented. "
+                    + "Keeping this order in simulation logs only.", executionMode);
+        }
+
+        log.info("SIMULATION ORDER at {} -> {}", Instant.now(), order);
         // TODO: integrate with broker REST / FIX / MT5 EA socket
         // brokerClient.placeOrder(order);
     }

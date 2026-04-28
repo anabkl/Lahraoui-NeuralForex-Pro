@@ -44,7 +44,7 @@ public class HeartbeatMonitor {
     private final ObjectMapper objectMapper;
 
     /** Whether the brain service is currently reachable. */
-    private final AtomicBoolean brainHealthy = new AtomicBoolean(true);
+    private final AtomicBoolean brainHealthy = new AtomicBoolean(false);
 
     /** Count of consecutive failed heartbeat calls. */
     private final AtomicInteger consecutiveFailures = new AtomicInteger(0);

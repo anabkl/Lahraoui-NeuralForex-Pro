@@ -7,6 +7,13 @@
 
   <!-- Chart.js from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script>
+    // Keep the dashboard usable in offline classrooms where the CDN is blocked.
+    window.Chart = window.Chart || class {
+      constructor(_ctx, config) { this.data = config.data || {}; }
+      update() {}
+    };
+  </script>
 
   <style>
     /* ── Reset & base ────────────────────────────────────────── */
@@ -173,6 +180,10 @@
   <div class="card">
     <div class="card-label">EUR/USD Bias</div>
     <div class="card-value" id="eurusd-bias">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Executor</div>
+    <div class="card-value neutral" id="executor-status">—</div>
   </div>
   <div class="card">
     <div class="card-label">Session P&L</div>

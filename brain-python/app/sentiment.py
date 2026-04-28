@@ -16,6 +16,7 @@ an auxiliary signal during live trading.
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -73,12 +74,16 @@ class SentimentAnalyzer:
 
     def __init__(self) -> None:
         self._nlp: Any = None
+        self._mode = os.getenv("SENTIMENT_MODE", "demo").strip().lower()
         self._init_model()
 
     # ------------------------------------------------------------------
     # Initialise
     # ------------------------------------------------------------------
     def _init_model(self) -> None:
+        if self._mode != "live":
+            logger.info("Sentiment analyser running in demo mode")
+            return
         if not _TRANSFORMERS_AVAILABLE:
             return
         try:
@@ -111,6 +116,14 @@ class SentimentAnalyzer:
             "timestamp": str,
         }
         """
+        if self._mode != "live":
+            return {
+                "FED": {"score": 0.0, "bias": "neutral", "headlines_analysed": 0, "mode": "demo"},
+                "ECB": {"score": 0.0, "bias": "neutral", "headlines_analysed": 0, "mode": "demo"},
+                "composite": {"USD_bias": "neutral", "EUR_bias": "neutral", "EURUSD_signal": "neutral"},
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            }
+
         results: dict[str, Any] = {}
         tasks = {inst: self._analyse_institution(inst, urls) for inst, urls in NEWS_SOURCES.items()}
 

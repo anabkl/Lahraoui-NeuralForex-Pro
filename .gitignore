@@ -208,6 +208,9 @@ __marimo__/
 
 # ── NeuralForex-Pro project specifics ────────────────────────────────────────
 
+.DS_Store
+**/.DS_Store
+
 # Java build artifacts
 executor-java/target/
 
