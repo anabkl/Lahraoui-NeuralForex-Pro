@@ -27,17 +27,40 @@ declare(strict_types=1);
 
 // ─── Configuration defaults ──────────────────────────────────────────────────
 
+function envOrDefault(string $name, mixed $default): mixed
+{
+    $value = getenv($name);
+    return ($value === false || $value === '') ? $default : $value;
+}
+
+function coerceConfigValue(mixed $currentValue, string $newValue): mixed
+{
+    if (is_int($currentValue)) {
+        return (int)$newValue;
+    }
+    if (is_float($currentValue)) {
+        return (float)$newValue;
+    }
+    return $newValue;
+}
+
+function randomFloat(): float
+{
+    return mt_rand() / mt_getrandmax();
+}
+
 $config = [
-    'dataFile'       => __DIR__ . '/data/EURUSD_M1_5Y.csv',
-    'stopLossPips'   => 20.0,
-    'takeProfitPips' => 40.0,   // 2× SL → risk:reward = 1:2
-    'minConfidence'  => 0.60,
-    'rsiPeriod'      => 14,
-    'macdFast'       => 12,
-    'macdSlow'       => 26,
-    'macdSignal'     => 9,
-    'initialBalance' => 10_000.0,
-    'riskPercent'    => 1.0,     // % of balance risked per trade
+    'dataFile'       => (string)envOrDefault('BACKTEST_DATA_FILE', __DIR__ . '/data/EURUSD_M1_5Y.csv'),
+    'syntheticBars'  => (int)envOrDefault('BACKTEST_SYNTHETIC_BARS', '10000'),
+    'stopLossPips'   => (float)envOrDefault('STOP_LOSS_PIPS', '20.0'),
+    'takeProfitPips' => (float)envOrDefault('TAKE_PROFIT_PIPS', '40.0'), // 2x SL -> risk:reward = 1:2
+    'minConfidence'  => (float)envOrDefault('MIN_CONFIDENCE', '0.60'),
+    'rsiPeriod'      => (int)envOrDefault('RSI_PERIOD', '14'),
+    'macdFast'       => (int)envOrDefault('MACD_FAST', '12'),
+    'macdSlow'       => (int)envOrDefault('MACD_SLOW', '26'),
+    'macdSignal'     => (int)envOrDefault('MACD_SIGNAL', '9'),
+    'initialBalance' => (float)envOrDefault('INITIAL_BALANCE', '10000.0'),
+    'riskPercent'    => (float)envOrDefault('RISK_PERCENT', '1.0'), // % of balance risked per trade
     'pipSize'        => 0.0001,  // EUR/USD pip
     'pipValuePerLot' => 10.0,    // USD per pip per standard lot
 ];
@@ -46,7 +69,7 @@ $config = [
 foreach ($argv as $arg) {
     if (preg_match('/^--(\w+)=(.+)$/', $arg, $m)) {
         if (array_key_exists($m[1], $config)) {
-            $config[$m[1]] = is_float($config[$m[1]]) ? (float)$m[2] : $m[2];
+            $config[$m[1]] = coerceConfigValue($config[$m[1]], $m[2]);
         }
     }
 }
@@ -171,11 +194,13 @@ function generateSignal(
  * @param string $filePath
  * @return array<int, array{time: string, open: float, high: float, low: float, close: float, volume: float}>
  */
-function loadCSV(string $filePath): array
+function loadCSV(string $filePath, int $syntheticBars): array
 {
     if (!file_exists($filePath)) {
-        // Generate synthetic data if no file is present (for CI / demo purposes)
-        return generateSyntheticData(5 * 365 * 24 * 60);  // 5 years of M1 bars
+        // Generate a small synthetic dataset if no CSV is present.
+        // This keeps Docker startup fast for demos and CI.
+        echo "Data file not found. Using {$syntheticBars} synthetic demo bars.\n";
+        return generateSyntheticData(max(500, $syntheticBars));
     }
 
     $rows = [];
@@ -215,12 +240,12 @@ function generateSyntheticData(int $bars): array
     $time   = mktime(0, 0, 0, 1, 1, date('Y') - 5);
 
     for ($i = 0; $i < $bars; $i++) {
-        $change = (lcg_value() - 0.5) * 0.0008;
+        $change = (randomFloat() - 0.5) * 0.0008;
         $open   = round($price, 5);
         $close  = round($price + $change, 5);
-        $high   = round(max($open, $close) + lcg_value() * 0.0003, 5);
-        $low    = round(min($open, $close) - lcg_value() * 0.0003, 5);
-        $volume = (int)(lcg_value() * 1000 + 100);
+        $high   = round(max($open, $close) + randomFloat() * 0.0003, 5);
+        $low    = round(min($open, $close) - randomFloat() * 0.0003, 5);
+        $volume = (int)(randomFloat() * 1000 + 100);
 
         $rows[] = [
             'time'   => date('Y-m-d H:i:s', $time),
@@ -244,7 +269,7 @@ echo "║       Lahraoui-NeuralForex-Pro  –  Backtesting Engine    ║\n";
 echo "╚══════════════════════════════════════════════════════════╝\n\n";
 echo "Loading data from: {$config['dataFile']}\n";
 
-$bars = loadCSV($config['dataFile']);
+$bars = loadCSV($config['dataFile'], $config['syntheticBars']);
 $totalBars = count($bars);
 
 echo sprintf("Loaded %s bars (approx. %.1f years of M1 data)\n\n",
@@ -427,9 +452,9 @@ $exportPath = __DIR__ . '/results/backtest_trades.csv';
 @mkdir(dirname($exportPath), 0755, true);
 $fh = fopen($exportPath, 'w');
 if ($fh !== false) {
-    fputcsv($fh, ['bar', 'time', 'direction', 'pnlPips', 'pnlUSD', 'balance', 'outcome']);
+    fputcsv($fh, ['bar', 'time', 'direction', 'pnlPips', 'pnlUSD', 'balance', 'outcome'], ',', '"', '');
     foreach ($trades as $t) {
-        fputcsv($fh, $t);
+        fputcsv($fh, $t, ',', '"', '');
     }
     fclose($fh);
     echo "Trade log exported to: $exportPath\n";

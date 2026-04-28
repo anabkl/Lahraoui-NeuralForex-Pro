@@ -85,7 +85,23 @@ app.add_middleware(
 @app.get("/health", tags=["ops"])
 async def health_check():
     """Simple liveness probe used by the Java executor heartbeat monitor."""
-    return {"status": "ok", "service": "brain-python"}
+    return {
+        "status": "ok",
+        "service": "brain-python",
+        "market_data_mode": getattr(data_feed, "_mode", "starting"),
+        "sentiment_mode": getattr(sentiment_analyzer, "_mode", "starting"),
+    }
+
+
+@app.get("/", tags=["ops"])
+async def root():
+    """Small welcome endpoint for humans opening the API in a browser."""
+    return {
+        "service": "brain-python",
+        "docs": "/docs",
+        "health": "/health",
+        "prediction": "/predict",
+    }
 
 
 # ---------------------------------------------------------------------------

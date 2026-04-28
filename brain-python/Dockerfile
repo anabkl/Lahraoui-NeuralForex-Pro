@@ -4,11 +4,6 @@ FROM python:3.11-slim
 LABEL maintainer="Anas Lahraoui <lahraoui.forex@example.com>"
 LABEL description="NeuralForex-Pro Brain Service – FastAPI AI prediction engine"
 
-# System dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Install Python dependencies first (layer cache optimisation)

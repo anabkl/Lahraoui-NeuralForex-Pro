@@ -1,12 +1,17 @@
 """
 brain-python/app/data_feed.py
 ==============================
-Twelve Data-based data feed for EUR/USD.
-Real market data for live trading.
+Market data service for EUR/USD.
+
+The service defaults to demo mode so the academic project can run without a
+paid market-data key or internet access. Set MARKET_DATA_MODE=twelvedata and
+TWELVE_DATA_API_KEY in .env when you want to test the live feed.
 """
 
 import asyncio
 import logging
+import math
+import os
 import requests
 import time
 from datetime import datetime, timezone
@@ -20,22 +25,24 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# --- TWELVE DATA CONFIGURATION ---
-TWELVE_API_KEY = "f6f193227ca440f4a9c03a25ab9522fa"
-SYMBOL = "EUR/USD"
-
 class DataFeedService:
     def __init__(self) -> None:
         self._connected = False
-        self.SYMBOL = "EURUSD"
+        self.SYMBOL = os.getenv("SYMBOL", "EURUSD")
+        self._external_symbol = os.getenv("TWELVE_DATA_SYMBOL", "EUR/USD")
+        self._mode = os.getenv("MARKET_DATA_MODE", "demo").strip().lower()
+        self._twelve_api_key = os.getenv("TWELVE_DATA_API_KEY", "").strip()
         self._last_tick_time = 0
         self._cached_tick = None
         self._last_history_time = 0
         self._cached_history = None
 
     async def connect(self) -> None:
+        if self._mode == "twelvedata" and not self._twelve_api_key:
+            logger.warning("MARKET_DATA_MODE=twelvedata but TWELVE_DATA_API_KEY is missing; using demo data")
+            self._mode = "demo"
         self._connected = True
-        logger.info("DataFeed: connected via Twelve Data")
+        logger.info("DataFeed connected in %s mode", self._mode)
 
     async def disconnect(self) -> None:
         self._connected = False
@@ -49,18 +56,19 @@ class DataFeedService:
     async def get_history(self, bars: int = 60) -> dict[str, Any]:
         if not self._connected:
             raise RuntimeError("DataFeed not connected")
+        bars = max(1, min(int(bars), 1000))
         loop = asyncio.get_event_loop()
         df = await loop.run_in_executor(None, lambda: self._fetch_history(bars))
-        
-        # 1. نحسبو المؤشرات على الداتا كاملة (فيها الزيادة)
+
+        # Compute indicators before trimming so RSI/MACD have enough warm-up bars.
         df = self._compute_indicators(df)
-        # 2. نحيدو السطورة اللي فيهم NaN
         df.dropna(inplace=True)
-        # 3. عاد ناخدو غير 60 شمعة اللخرة نقية ومقادة للـ AI
         df = df.tail(bars).reset_index(drop=True)
+        df["time"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         return {
             "symbol": self.SYMBOL,
+            "mode": self._mode,
             "bars": len(df),
             "columns": df.columns.tolist(),
             "data": df.to_dict(orient="records"),
@@ -68,11 +76,17 @@ class DataFeedService:
 
     def _fetch_latest_tick(self) -> dict[str, Any]:
         current_time = time.time()
-        # Cache 15s to save Twelve Data credits
+        # Cache briefly to keep the dashboard smooth and avoid wasting API calls.
         if self._cached_tick and (current_time - self._last_tick_time < 15):
             return self._cached_tick
 
-        url = f"https://api.twelvedata.com/price?symbol={SYMBOL}&apikey={TWELVE_API_KEY}"
+        if self._mode != "twelvedata":
+            return self._demo_tick(current_time)
+
+        url = (
+            "https://api.twelvedata.com/price"
+            f"?symbol={self._external_symbol}&apikey={self._twelve_api_key}"
+        )
         try:
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
@@ -87,23 +101,35 @@ class DataFeedService:
                 "bid": round(price, 5),
                 "ask": round(price + spread, 5),
                 "time": datetime.now(tz=timezone.utc).isoformat(),
+                "mode": self._mode,
             }
             self._last_tick_time = current_time
             return self._cached_tick
         except Exception as exc:
-            logger.error(f"TwelveData Tick Error: {exc}")
+            logger.warning("Twelve Data tick failed (%s); falling back to demo tick", exc)
             if self._cached_tick:
                 return self._cached_tick
-            raise
+            return self._demo_tick(current_time)
 
     def _fetch_history(self, bars: int) -> pd.DataFrame:
         current_time = time.time()
         if self._cached_history is not None and (current_time - self._last_history_time < 60):
             return self._cached_history.copy()
 
-        # كنجيبو الداتا بزايد (bars + 50) باش المؤشرات يلقاو فين يتسخنو (Warmup)
+        # Fetch/generate extra rows so RSI and MACD can warm up before inference.
         req_bars = min(bars + 50, 5000)
-        url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1min&outputsize={req_bars}&apikey={TWELVE_API_KEY}"
+
+        if self._mode != "twelvedata":
+            df = self._demo_history(req_bars)
+            self._cached_history = df
+            self._last_history_time = current_time
+            return df.copy()
+
+        url = (
+            "https://api.twelvedata.com/time_series"
+            f"?symbol={self._external_symbol}&interval=1min"
+            f"&outputsize={req_bars}&apikey={self._twelve_api_key}"
+        )
         
         try:
             resp = requests.get(url, timeout=15)
@@ -128,10 +154,51 @@ class DataFeedService:
             self._last_history_time = current_time
             return df.copy()
         except Exception as exc:
-            logger.error(f"TwelveData History Error: {exc}")
+            logger.warning("Twelve Data history failed (%s); falling back to demo history", exc)
             if self._cached_history is not None:
                 return self._cached_history.copy()
-            raise
+            return self._demo_history(req_bars)
+
+    def _demo_tick(self, current_time: float) -> dict[str, Any]:
+        """Return a deterministic, safe EUR/USD demo tick."""
+        price = self._demo_price(current_time / 60)
+        spread = 0.00010
+        self._cached_tick = {
+            "symbol": self.SYMBOL,
+            "bid": round(price, 5),
+            "ask": round(price + spread, 5),
+            "time": datetime.now(tz=timezone.utc).isoformat(),
+            "mode": "demo",
+        }
+        self._last_tick_time = current_time
+        return self._cached_tick
+
+    def _demo_history(self, bars: int) -> pd.DataFrame:
+        """Generate repeatable OHLC bars for local demos and tests."""
+        now = int(time.time() // 60) * 60
+        rows = []
+        for i in range(bars):
+            minute = now - (bars - i - 1) * 60
+            open_price = self._demo_price((minute - 60) / 60)
+            close_price = self._demo_price(minute / 60)
+            wiggle = 0.00005 + abs(math.sin(minute / 900)) * 0.00008
+            high = max(open_price, close_price) + wiggle
+            low = min(open_price, close_price) - wiggle
+            rows.append({
+                "time": datetime.fromtimestamp(minute, tz=timezone.utc),
+                "Open": round(open_price, 5),
+                "High": round(high, 5),
+                "Low": round(low, 5),
+                "Close": round(close_price, 5),
+                "Volume": 1.0,
+            })
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _demo_price(minute_index: float) -> float:
+        trend = math.sin(minute_index / 80) * 0.0012
+        cycle = math.sin(minute_index / 9) * 0.00035
+        return 1.0850 + trend + cycle
 
     def _compute_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         close = df["Close"]

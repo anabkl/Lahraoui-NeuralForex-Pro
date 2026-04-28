@@ -17,9 +17,11 @@
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 const CONFIG = {
-  brainUrl:          window.BRAIN_URL || 'http://localhost:8000',
+  brainUrl:          window.BRAIN_URL || '/api',
+  executorUrl:       window.EXECUTOR_URL || '/executor',
   tickInterval:      2_000,   // ms – how often to fetch latest tick
   predInterval:      10_000,  // ms – how often to fetch prediction
+  executorInterval:  10_000,  // ms – how often to fetch executor status
   sentimentInterval: 60_000,  // ms – how often to fetch sentiment
   maxPricePoints:    120,     // bars visible on the price chart
 };
@@ -49,6 +51,7 @@ const elConf         = $('confidence');
 const elFedSentiment = $('fed-sentiment');
 const elEcbSentiment = $('ecb-sentiment');
 const elEurUsdBias   = $('eurusd-bias');
+const elExecutor     = $('executor-status');
 const elSessionPnl   = $('session-pnl');
 const elStatusDot    = $('status-dot');
 const elStatusText   = $('status-text');
@@ -160,8 +163,12 @@ const confidenceChart = new Chart($('confidence-chart').getContext('2d'), {
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
-async function apiFetch(path) {
-  const resp = await fetch(`${CONFIG.brainUrl}${path}`, { signal: AbortSignal.timeout(5000) });
+function timeoutSignal(ms) {
+  return 'timeout' in AbortSignal ? AbortSignal.timeout(ms) : undefined;
+}
+
+async function apiFetch(path, baseUrl = CONFIG.brainUrl) {
+  const resp = await fetch(`${baseUrl}${path}`, { signal: timeoutSignal(5000) });
   if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${path}`);
   return resp.json();
 }
@@ -279,6 +286,21 @@ async function fetchSentiment() {
   }
 }
 
+// ─── Executor status poll ───────────────────────────────────────────────────
+
+async function fetchExecutorStatus() {
+  try {
+    const status = await apiFetch('/status', CONFIG.executorUrl);
+    const healthy = Boolean(status.brainHealthy);
+    elExecutor.textContent = healthy ? status.executionMode || 'SIMULATION' : 'Waiting';
+    elExecutor.className = 'card-value ' + (healthy ? 'positive' : 'neutral');
+  } catch (err) {
+    console.warn('[Executor] status fetch failed:', err.message);
+    elExecutor.textContent = 'Offline';
+    elExecutor.className = 'card-value negative';
+  }
+}
+
 // ─── Trade log ────────────────────────────────────────────────────────────────
 
 const MAX_LOG_ROWS = 50;
@@ -333,7 +355,9 @@ function pnlClass(pnl) {
 fetchTick();
 fetchPrediction();
 fetchSentiment();
+fetchExecutorStatus();
 
 setInterval(fetchTick,       CONFIG.tickInterval);
 setInterval(fetchPrediction, CONFIG.predInterval);
 setInterval(fetchSentiment,  CONFIG.sentimentInterval);
+setInterval(fetchExecutorStatus, CONFIG.executorInterval);
